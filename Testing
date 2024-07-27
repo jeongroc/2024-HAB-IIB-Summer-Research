@@ -1,0 +1,786 @@
+!pip install openai
+
+!pip install langchain
+!pip install langchain-community langchain-core
+
+
+!pip install tiktoken
+
+!pip install eppy
+#seems to be some issue but it looks like everything downloaded successfully so i will ignore this issue for now?
+
+import os
+os.environ["OPENAI_API_KEY"] = "secret key"
+
+from langchain.llms import OpenAI
+
+
+
+llm = OpenAI(temperature=0.5)
+#temperature is 0.5 for now but it can be changed - assuming 0.5 should suffice for now
+#Had some issues with specifying the model of LLM, come revisit later and set to gpt4o
+
+
+
+from langchain.prompts import PromptTemplate
+prompt_template_LLM = PromptTemplate(
+    input_variables=['IDF', 'restrictions'],
+    template="Input the {IDF} you would like for optimization, and list any {restrictions} that you would like to keep constant"
+)
+
+
+prompt_template_LLM.save("Input.json")
+
+from langchain.prompts import load_prompt
+
+#test run
+
+from langchain.chains import LLMChain
+
+def example(temperature):
+  llm = OpenAI(temperature = 0.5)
+  prompt_template_example = PromptTemplate(
+      input_variables = ['temperature'],
+      template = "Optimize a building with random dimensions with a temperature of {temperature}"
+  )
+  examplechain = LLMChain(llm = llm, prompt = prompt_template_example)
+  response = examplechain({'temperature': temperature})
+  return response
+
+print(example('50'))
+#why is there an error with the API key
+#first run looks good
+
+#second run, trying with IDF and E+ now
+def example2(temperature):
+  llm = OpenAI(temperature = 0.5)
+  prompt_template_example = PromptTemplate(
+      input_variables = ['temperature'],
+      template = "Optimize a building on EnergyPlus with dimensions of 50 m tall, 50 m wide, 50 m long, with a temperature of {temperature}. I want to ensure the window to wall ratio is 0.5 as well"
+  )
+  examplechain = LLMChain(llm = llm, prompt = prompt_template_example)
+  response = examplechain({'temperature': temperature})
+  return response
+
+print(example2('50'))
+
+#somewhat successful, does not outright do anything with IDF files but rather just raw text
+
+import warnings
+warnings.filterwarnings("ignore", category = PendingDeprecationWarning)
+#can be disabled later
+
+from langchains.llms import OpenAI
+
+#tested zero shot examples and seemed to work but we don't really need it at all
+#one shots seem to be useful but i think few shots are always best
+
+from langchain.prompts.few_shot import FewShotPromptTemplate
+from langchain.prompts.prompt import PromptTemplate
+
+example = [
+    {
+        "Dimensions": "5x5x5 meters and 10 kg",
+        "Volume": "125 meters cubed",
+        "Density": "0.08 kilograms per meters cubed",
+    }
+]
+
+example_prompt = PromptTemplate(
+    input_variables = ["Length", "Height", "Width", "Mass"],
+    template = "Building: {Volume}\n{Density}"
+)
+
+
+prompt = FewShotPromptTemplate(
+    examples = example,
+    example_prompt = example_prompt,
+    suffix = "Building: {Length}, {Width}, {Height}, {Mass}",
+    input_variables = ["Length", "Width", "Height", "Mass"],
+)
+
+print(llm(prompt.format(Length="1", Width="5", Height="6", Mass="7")))
+#had some issue
+
+from typing import List
+from langchain.prompts import ChatPromptTemplate, PromptTemplate, FewShotPromptTemplate
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain.llms import OpenAI
+from langchain_core.output_parsers import JsonOutputParser, CommaSeparatedListOutputParser
+#testing 2 output parsers but there are like 15, test out them if needed
+
+model = OpenAI(temperature = 0.5)
+
+class Volume(BaseModel):
+  Dimensions: str = Field(description = "Dimensions of building")
+  Volume: int = Field(description = "Volume of building")
+
+#json formatting
+json_parser = JsonOutputParser(pydantic_object=Volume)
+
+example_prompt=PromptTemplate(
+    template="{format_instructions}\n{Player}\n",
+    partial_variables={"format_instructions": json_parser.get_format_instructions()},
+    input_variables=["Dimensions"],
+)
+
+model(example_prompt.format(Player = "1 x 5 x 6"))
+
+print(model(example_prompt.format(Player = "1 x 5 x 6")))
+#seems to work fine, good example and json formatting seems to work
+
+#csv formatting
+csv_parser = CommaSeparatedListOutputParser()
+
+#few shot training since no class
+examplesfewshot = [
+    {
+        "Mass and volume": "20 kg and 20 metres cubed",
+        "Density": "1 kg per metre cubed"
+    },
+    {
+        "Mass and volume": "2500 g and 20 centimetres cubed",
+        "Density": "125 g per centimetre cubed"
+    }
+]
+
+example_prompt2 = PromptTemplate(
+    template="{format_instructions}\n{Mass and volume}\n{Density}",
+    partial_variables={"format_instructions":csv_parser.get_format_instructions()},
+    input_variables=["Mass and volume"]
+)
+
+prompt = FewShotPromptTemplate(
+    examples=examplesfewshot,
+    example_prompt=example_prompt2,
+    prefix = "I want to find the density for a building with a given mass and volume",
+    suffix = "Mass and volume: {MassandVolume}",
+    input_variables=["MassandVolume"]
+)
+
+print(prompt.format(MassandVolume="1kg and 1 metre cubed"))
+
+print(model(prompt.format(MassandVolume="20000kg and 123 metre cubed")))
+#works for more random numbers too
+
+print(model(prompt.format(MassandVolume="1kg and 1 metre cubed")))
+
+#eppy testing
+#i have no clue how to use eppy
+import sys
+pathnameto_eppy = 'c:/eppy'
+sys.path.append(pathnameto_eppy)
+
+from eppy import modeleditor
+from eppy.modeleditor import IDF
+iddfile = "c:/eppy/resources/iddfiles/Energy+V7_2_0.idd"
+idffile = "c:/eppy/resources/idffiles/V_7_2/smallfile.idf"
+idf1 = IDF(idffile)
+
+idf1.printidf()
+
+
+#llm chain testing
+from typing import List
+from langchain.prompts import PromptTemplate
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain.llms import OpenAI
+
+model = OpenAI(temperature=0.5)
+
+prompt_template_annualenergyconsumption=PromptTemplate(
+    input_variables=['volume', 'power consumption'],
+    template="Calculate the annual power consumption for a building of {volume} and {power consumption}"
+)
+
+chainv1=prompt_template_annualenergyconsumption | model
+
+print(chainv1.invoke({"volume": "5m^3", "power consumption": "100 W per cm^3"}))
+#the text cuts off at the end for some reason but it seems to do the calculations properly, but there is no final answer
+
+from langchain_core.output_parsers import JsonOutputParser
+
+class AnnualPowerConsumption(BaseModel):
+  Volume: str = Field(description="Volume of building")
+  Powerconsumptionrate: str = Field(description="Power consumption rate")
+  Annualconsumption: str = Field(description="Total power consumption")
+
+json_parser = JsonOutputParser(pydantic_object=AnnualPowerConsumption)
+
+example_promptx = PromptTemplate(
+    prefix = "I want to find the annual power consumption of a building given a volume and power consumption rate",
+    template = "{format_instructions}\n{Volume}\n{Powerconsumptionrate}\n",
+    partial_variables={"format_instructions": json_parser.get_format_instructions()},
+    input_variables=["Volume", "Powerconsumptionrate"],
+)
+
+chainv2 = example_promptx | model | json_parser
+
+chainv2.invoke({"Volume": "20 m^3", "Powerconsumptionrate": "10W/mm^3"})
+#chain seems to fail as it does not represent the annual consumption and cannot recognize the units but also does not display the text - why?
+
+#langchain tools testing
+#https://js.langchain.com/v0.1/docs/integrations/tools/
+!pip install youtube_search
+!pip install wikipedia
+
+#functions to see details of current tool
+tool.name
+tool.description
+tool.args
+
+from langchain.tools import YouTubeSearchTool
+
+tool = YouTubeSearchTool()
+
+tool.run("Me at the zoo")
+#works fine for the title alone
+
+tool.run("Me at the zoo, 5")
+#testing the number of queries seems to work successfully as well
+#one thing to note is that not all are directly linked to jawed videos but have some relevance to the video so could be useful, tools seem to be generally related but only the first 1-3 outputs seem to have direct relation to what is desired
+
+from langchain.tools import WikipediaQueryRun
+from langchain_community.utilities import WikipediaAPIWrapper
+
+api_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=250)
+tool = WikipediaQueryRun(api_wrapper=api_wrapper)
+
+tool.run("EnergyPlus")
+#seems to work fine and a similar format for other tools can be followed and identified using functions above and tools from the link above
+#the two tools experimented here would not be useful for us right now but gives a general idea of how to use tools and there are plenty we might be able to use in the future
+
+from langchain_core.pydantic_v1 import BaseModel, Field
+class WikiInputs(BaseModel):
+  """Inputs to Wikipedia tool and can be changed depending on necessary tool."""
+  query: str = Field(
+      description="query for Wikipedia, keep short"
+  )
+
+#example code for adjusting tool, we can customize any future tools we may use slightly
+tool = WikipediaQueryRun(
+    name="example-tool",
+    description="example tool for testing, set to wikipedia",
+    args_schema=WikiInputs,
+    api_wrapper=api_wrapper,
+    return_direct=True
+)
+
+#tiktoken testing
+#https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken
+#https://github.com/openai/tiktoken?tab=readme-ov-file#-tiktoken
+
+#depends on my use of eppy as of now
+
+#since tiktoken cant directly tokenize an idf file but it can tokenize the text, once i figure out eppy i think my plan is to run it through eppy into raw text, then encode into tokens, then conduct the testing, then decode once done, all with tiktoken, then afterwards convert back to idf with eppy
+import tiktoken
+#comparing/other basic python funcitons are usable here to compare tokens and etc so it is very simple work
+
+encoding = tiktoken.get_encoding("o200k_base")
+encoding = tiktoken.encoding_for_model("gpt-4o")
+
+#encoding.encode("idf file text")
+encoding.encode("length 5m width 6m height 10m window to wall ratio 0.5")
+
+#decoding tests
+variable = encoding.encode("length 5m width 6m height 10m window to wall ratio 0.5")
+encoding.decode(variable)
+
+#use basic python counting functions to see the length of string for total number of tokens, but generally unneeded for us
+
+#function to count tokens in messages, may be useful in final steps of work, currently not that useful
+def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0613"):
+    """Return the number of tokens used by a list of messages."""
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+    except KeyError:
+        print("Warning: model not found. Using cl100k_base encoding.")
+        encoding = tiktoken.get_encoding("cl100k_base")
+    if model in {
+        "gpt-3.5-turbo-0613",
+        "gpt-3.5-turbo-16k-0613",
+        "gpt-4-0314",
+        "gpt-4-32k-0314",
+        "gpt-4-0613",
+        "gpt-4-32k-0613",
+        }:
+        tokens_per_message = 3
+        tokens_per_name = 1
+    elif model == "gpt-3.5-turbo-0301":
+        tokens_per_message = 4  # every message follows <|start|>{role/name}\n{content}<|end|>\n
+        tokens_per_name = -1  # if there's a name, the role is omitted
+    elif "gpt-3.5-turbo" in model:
+        print("Warning: gpt-3.5-turbo may update over time. Returning num tokens assuming gpt-3.5-turbo-0613.")
+        return num_tokens_from_messages(messages, model="gpt-3.5-turbo-0613")
+    elif "gpt-4" in model:
+        print("Warning: gpt-4 may update over time. Returning num tokens assuming gpt-4-0613.")
+        return num_tokens_from_messages(messages, model="gpt-4-0613")
+    else:
+        raise NotImplementedError(
+            f"""num_tokens_from_messages() is not implemented for model {model}. See https://github.com/openai/openai-python/blob/main/chatml.md for information on how messages are converted to tokens."""
+        )
+    num_tokens = 0
+    for message in messages:
+        num_tokens += tokens_per_message
+        for key, value in message.items():
+            num_tokens += len(encoding.encode(value))
+            if key == "name":
+                num_tokens += tokens_per_name
+    num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
+    return num_tokens
+
+
+#language testing with korean and chinese prompts mixed with english prompts, format taken from previous tests
+#test 1, no data fed, tested with strictly korean
+#one note is i have no clue what watts per cubic centimetres are in korean so i used chatgpt
+#works well and outputs in korean as well
+#i want to test other languages as we are not certain
+
+from typing import List
+from langchain.prompts import PromptTemplate
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain.llms import OpenAI
+
+model = OpenAI(temperature=0.5)
+
+prompt_template_annualenergyconsumption=PromptTemplate(
+    input_variables=['volume', 'power consumption'],
+    template="연간 전력 소비량 계산 {volume} {power consumption}"
+)
+
+chainv1=prompt_template_annualenergyconsumption | model
+
+print(chainv1.invoke({"volume": "5입방미터", "power consumption": "100 와트 퍼 세제곱센티미터"}))
+
+
+#test 2, no data fed, korean and chinese are both used this time around - i know it is capable of english, but how about chinese and korean now?
+#seems to work but the output is a little weird since it outputs in both languages
+
+from typing import List
+from langchain.prompts import PromptTemplate
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain.llms import OpenAI
+
+model = OpenAI(temperature=0.5)
+
+prompt_template_annualenergyconsumption=PromptTemplate(
+    input_variables=['volume', 'power consumption'],
+    template="연간 전력 소비량 계산 {volume} {power consumption}"
+)
+
+chainv1=prompt_template_annualenergyconsumption | model
+
+print(chainv1.invoke({"volume": "5立方米", "power consumption": "100 瓦特每立方厘米"}))
+
+
+#test 3, feeding it a one-shot, testing chinese examples with a korean input template and the numbers inputted with english units
+#final test results - the part which seems to influence the language of the final output the most seems to be the examples seeing as the final output was in chinese even though the template was in korean and the input was in english
+
+csv_parser = CommaSeparatedListOutputParser()
+examplesfewshot = [
+    {
+        "质量和体积": "20公斤和20立方米",
+        "密度": "每立方米1公斤"
+    },
+    {
+        "质量和体积": "2500克和20立方厘米",
+        "密度": "每立方厘米125克"
+    }
+]
+
+example_prompt2 = PromptTemplate(
+    template="{format_instructions}\n{质量和体积}\n{密度}",
+    partial_variables={"format_instructions":csv_parser.get_format_instructions()},
+    input_variables=["质量和体积"]
+)
+prompt = FewShotPromptTemplate(
+    examples=examplesfewshot,
+    example_prompt=example_prompt2,
+    prefix = "주어진 질량과 부피로 건물의 밀도를 찾고 싶습니다",
+    suffix = "质量和体积: {质量和体积}",
+    input_variables=["质量和体积"]
+)
+print(prompt.format(质量和体积="1kg and 1 metre cubed"))
+print(model(prompt.format(质量和体积="20000kg and 123 metre cubed")))
+
+
+#selectors
+!pip install chromadb
+
+#selector for restricting token length
+from langchain.chat_models import ChatOpenAI
+from langchain.prompts.example_selector import LengthBasedExampleSelector
+from langchain.prompts import PromptTemplate
+
+chat = ChatOpenAI()
+
+examples_tokenlength = [
+    {
+        "Mass and volume": "20 kg and 20 metres cubed",
+        "Density": "1 kg per metre cubed"
+    },
+    {
+        "Mass and volume": "2500 g and 20 centimetres cubed",
+        "Density": "125 g per centimetre cubed"
+    }
+]
+
+example_prompt = PromptTemplate(
+    input_variables=["Mass and volume"],
+    template="Volume: {Mass and volume}\n{Density}",
+)
+
+example_selector = LengthBasedExampleSelector(
+    examples=examples_tokenlength,
+    example_prompt=example_prompt,
+    max_length=150,
+    get_text_length=chat.get_num_tokens
+)
+
+prompt = FewShotPromptTemplate(
+    example_prompt=example_prompt,
+    example_selector=example_selector,
+    prefix="I want to find the density for a building with a given mass and volume",
+    suffix="Mass and volume: {MassandVolume}",
+    input_variables=["MassandVolume"]
+)
+
+print(prompt.format(MassandVolume="2 kg and 5 metres cubed"))
+
+#simiilarity selector can be used, i have the code ready and the imports are here but right now isn't useful but can be used later
+from langchain.prompts import PromptTemplate, FewShotPromptTemplate
+from langchain.prompts.example_selector import SemanticSimilarityExampleSelector
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.vectorstores import Chroma
+
+examples_similarity = [
+    {
+        "Mass and volume": "20 kg and 20 metres cubed",
+        "Density": "1 kg per metre cubed"
+    },
+    {
+        "Mass and volume": "20 g and 2500 centimetres cubed",
+        "Density": "0.008 g per centimetre cubed"
+    },
+    {
+        "Mass and volume": "2500 g and 20 centimetres cubed",
+        "Density": "125 g per centimetre cubed"
+    }
+]
+
+density_template = """
+Mass and Volume: {Mass_and_volume}
+Density: {Density}
+"""
+
+example_prompt = PromptTemplate(
+    input_variables=["Mass_and_volume", "Density"],
+    template=density_template
+)
+
+similarity_selector = SemanticSimilarityExampleSelector.from_examples(
+    examples=examples_similarity,
+    embeddings=OpenAIEmbeddings(),
+    vectorstore_cls=Chroma,
+    k=2
+)
+
+similarity_prompt = FewShotPromptTemplate(
+    example_prompt=example_prompt,
+    example_selector=similarity_selector,
+    prefix="I want to find the density for a building with a given mass and volume",
+    suffix="Mass and volume: {Mass_and_volume}",
+    input_variables=["Mass_and_volume"]
+)
+
+print(similarity_prompt.format(Mass_and_volume="2550 g and 23 centimetres cubed"))
+
+#i tried everything
+#i gave up here i cant figure out what the issue is and it doesnt matter but i know the code should be right
+
+#max marginal selector
+from langchain.prompts.example_selector import MaxMarginalRelevanceExampleSelector
+
+examples_maxmarginal = [
+    {
+        "Mass and volume": "20 kg and 20 metres cubed",
+        "Density": "1 kg per metre cubed"
+    },
+    {
+        "Mass and volume": "20 g and 2500 centimetres cubed",
+        "Density": "0.008 g per centimetre cubed"
+    },
+    {
+        "Mass and volume": "2500 g and 20 centimetres cubed",
+        "Density": "125 g per centimetre cubed"
+    }
+]
+
+density_template = """
+Mass and Volume: {Massandvolume}
+Density: {Density}
+"""
+
+example_prompt = PromptTemplate(
+    input_variables=["Massandvolume", "Density"],
+    template=density_template
+)
+
+maxmarginal_selector = MaxMarginalRelevanceExampleSelector.from_examples(
+    examples=examples_maxmarginal,
+    embeddings=OpenAIEmbeddings(),
+    vectorstore_cls=Chroma,
+    k=2
+)
+
+maxmarginal_prompt = FewShotPromptTemplate(
+    example_prompt=example_prompt,
+    example_selector=maxmarginal_selector,
+    prefix="I want to find the density for a building with a given mass and volume",
+    suffix="Mass and volume: {Massandvolume}",
+    input_variables=["Massandvolume"]
+)
+
+print(maxmarginal_prompt.format(Massandvolume="2550 g and 23 centimetres cubed"))
+#same issue i dont know and i give up
+
+#ngram tests similarity to examples and sets score from 0 to 1 based on similarity
+from langchain.prompts.example_selector.ngram_overlap import NGramOverlapExampleSelector
+
+examples_ngram = [
+    {
+        "Mass and volume": "20 kg and 20 metres cubed",
+        "Density": "1 kg per metre cubed"
+    },
+    {
+        "Mass and volume": "20 g and 2500 centimetres cubed",
+        "Density": "0.008 g per centimetre cubed"
+    },
+    {
+        "Mass and volume": "2500 g and 20 centimetres cubed",
+        "Density": "125 g per centimetre cubed"
+    }
+]
+
+density_template = """
+Mass and Volume: {Massandvolume}
+Density: {Density}
+"""
+
+example_prompt = PromptTemplate(
+    input_variables=["Massandvolume", "Density"],
+    template=density_template
+)
+
+ngram_selector = NGramOverlapExampleSelector(
+    examples=examples_ngram,
+    example_prompt=example_prompt,
+    threshold=-1.0,
+    embeddings=OpenAIEmbeddings(),
+    vectorstore_cls=Chroma,
+)
+
+ngram_prompt = FewShotPromptTemplate(
+    example_prompt=example_prompt,
+    example_selector=ngram_selector,
+    prefix="I want to find the density for a building with a given mass and volume",
+    suffix="Mass and volume: {Massandvolume}",
+    input_variables=["Massandvolume"]
+)
+
+print(ngram_prompt.format(Massandvolume="2550 grams and 22 cm^3"))
+#same thing
+
+#langchain agents, training with agents since openai sometimes lacks digital data we may need or be outdated so using agents we can fill the gaps in ourselves
+!pip install duckduckgo-search
+
+!pip install wikipedia
+
+!pip install langchainhub
+
+!pip install langchain_openai
+
+from langchain_openai import ChatOpenAI
+from langchain import hub
+from langchain.agents import create_openai_functions_agent
+from langchain.agents import AgentExecutor
+from langchain.schema import HumanMessage, SystemMessage
+
+llm = ChatOpenAI(temperature = 0.5)
+
+message = [
+    SystemMessage(
+        content="A user will input the the year and you will list all the updates the EnergyPlus model got in that year"
+    ),
+    HumanMessage(
+        content="2024"
+    ),
+]
+
+llm.invoke(message)
+#updated and on top of things for this example
+
+prompt = hub.pull("hwchase17/openai-functions-agent")
+
+from langchain.tools import WikipediaQueryRun
+from langchain_community.utilities import WikipediaAPIWrapper
+
+api_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=250)
+wikitool = WikipediaQueryRun(api_wrapper=api_wrapper)
+tools = [wikitool]
+
+# Remove the 'functions' argument when creating the agent
+agent = create_openai_functions_agent(llm, tools, prompt)
+
+agent_executor= AgentExecutor(agent=agent, tools=tools)
+
+agent_executor.invoke({"input":"What updates did EnergyPlus have in 2024"})
+#output seems worse than previous run without wikipedia for some reason, probably due to lack of comprehension of text within the wikipedia page related to prompt
+
+#multiple tools
+from langchain import LLMMathChain
+
+from langchain.agents import Tool
+
+llm_math_chain = LLMMathChain.from_llm(llm=llm, verbose=True)
+
+math_tool = Tool.from_function(
+    func=llm_math_chain.run,
+    name="Calculator",
+    description="Useful for when you need to answer math questions",
+)
+
+from langchain.tools import DuckDuckGoSearchRun
+
+search = DuckDuckGoSearchRun()
+
+tools2 = [search, math_tool]
+
+agent2 = create_openai_functions_agent(llm = llm, tools = tools2, prompt = prompt)
+
+agent_executor2 = AgentExecutor (agent = agent2, tools = tools2, verbose=True)
+
+agent_executor2.invoke({"input":"What updates did EnergyPlus have in 2016 and how many updates in total has it had since its inception?"})
+#so first time i ran it it gave a poor answer and left the 2016 question untouched, but running the exact code again had it working, so maybe sometimes the api is buggy or maybe i need to turn the temperature up for more consistency
+
+#application beginning
+!pip install streamlit
+!pip install langchain_openai
+!pip install pandas
+
+import streamlit as st
+import pandas as pd
+from langchain_openai import ChatOpenAI
+
+
+#testing textual applications
+llm = ChatOpenAI(temperature = 0.5)
+llm_string = st.text_input("Enter the IDF file of the building you wish to operate on")
+button_clicked = st.button("Optimize")
+
+if button_clicked:
+  if llm_string is not None:
+    output = llm.invoke(llm_string)
+    st.write("Optimized building details:")
+    st.write(output)
+  else:
+    st.warning("Please enter the IDF file of the building you wish to operate on")
+
+  #py -m streamlit run filename.py
+
+
+
+#testing json applications
+from langchain.agents import create_json_agent, AgentExecutor
+
+llm = ChatOpenAI(temperature = 0.5)
+
+uploaded_file = st.file_uploader("Choose the IDF file of the building you wish to operate on")
+llm_string = st.text_input("Enter any parameters you would like consistent")
+
+if uploaded_file and llm_string is not None:
+  button_clicked = st.button("Optimize")
+
+if button_clicked:
+  agent_executor = create_json_agent(llm, uploaded_file, verbose=True)
+  output = agent_executor.invoke("blank")
+  #optimize building etc etc
+  st.write("Optimized building details:")
+  st.write(output)
+
+else:
+  st.warning("Please upload the IDF file of the building you wish to operate on")
+
+#testing for json files, waiting on response from prof to test
+df['title of column you want to see'].functionyouwanttosee()
+agent_executor.invoke("whatever column you want to see or value or whatever")
+#should be identical and that would ensure llm reads the json correctly
+
+#attention function
+!pip install torch
+
+
+import torch
+import torch.nn.functional as torchfunc
+
+import numpy
+from scipy.special import softmax
+import matplotlib.pyplot as plt
+import seaborn as sns
+from mpl_toolkits.mplot3d import Axes3D
+
+input_1=numpy.array
+
+#can apply a mask too but I didn't think it was needed
+def attention(query, key, value):
+  #for the dot product part of the attention formula, and -2 and -1 are representing the switch in dimensions for the transpose
+  dot_qktranspose = torch.matmul(query, key.transpose(-2, -1))
+  depth = key.size(-1)
+  scale_attention = dot_qktranspose / torch.sqrt(torch.tensor(depth, dtype=torch.float32))
+
+  attention_weight = torchfunc.softmax(scale_attention, dim=-1)
+
+  output = torch.matmul(attention_weight, value)
+  return output, attention_weight
+
+  #the input will be the matrices created by the tokenization of the json file as shown above
+
+  query = torch.rand(batch_size, seq_len_q, depth)
+  key = torch.rand(batch_size, seq_len_k, depth)
+  value = torch.rand(batch_size, seq_len_k, depth)
+  #for converting into the QKV matrices we need
+
+import torch
+import torch.nn as nn
+import numpy as np
+!pip install tiktoken
+import tiktoken
+from torch import Tensor
+import math
+
+  vocab_size = 100000
+  embedding_dim = 64
+
+  #encoding given text
+  encoding = tiktoken.encoding_for_model("gpt-4o")
+  tokenized_data = encoding.encode("I like to play basketball")
+
+  #input for embedding functions (vocab size, dimensions) and apparently standard vocab size is 100k? we can see later, we can talk about it apparently there is code for adjusting as we go (vocab_size = max_token_id + 1  # Set vocabulary size to the maximum token ID + 1)
+  tokenized_tensor = torch.tensor(tokenized_data, dtype=torch.long).unsqueeze(0)
+  embeddingfunction = nn.Embedding(vocab_size, embedding_dim)
+  embedding = embeddingfunction(tokenized_tensor)
+
+  #positional encoding - this part lost me entirely
+  positional_encoding = PositionalEncoding(embedding_dim)
+  encoded_tokens = positional_encoding(embedding)
+
+  #attention function
+  #does not need to be 8
+  multihead_attn = nn.MultiheadAttention(embed_dim = embedding_dim, num_heads = 8, batch_first=True)
+  attn_output, attn_output_weights = multihead_attn(encoded_tokens, encoded_tokens, encoded_tokens)
+
+  #converting back to text
+  linear_layer = nn.Linear(embedding_dim, vocab_size)
+  logits = linear_layer(attn_output)
+  predicted_token_ids = torch.argmax(logits, dim=-1)
+  print(encoding.decode(predicted_token_ids.squeeze().tolist()))
