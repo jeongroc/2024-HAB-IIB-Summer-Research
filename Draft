@@ -1,0 +1,103 @@
+!pip install OpenAI
+!pip install langchain
+!pip install langchain-community langchain-core
+!pip install chromadb
+!pip install tiktoken
+!pip install pypdf
+!pip install streamlit
+!pip install langchain_openai
+!pip install pandas
+
+import streamlit as st
+import pandas as pd
+from langchain_openai import ChatOpenAI
+import tiktoken
+import json
+import torch
+import torch.nn as nn
+import numpy as np
+import math
+import torch.nn.functional as F
+from langchain.llms import OpenAI
+from torch import Tensor
+
+import os
+os.environ["OPENAI_API_KEY"] = "secret key"
+from langchain.agents import create_json_agent, AgentExecutor
+def tea():
+  pass
+
+#can be changed, we should probably run with close to 0. above 1 is more creative, below 1 is more repetitive and deterministic which we want
+llm = ChatOpenAI(temperature = 0.1)
+
+uploaded_file = st.file_uploader("Choose the IDF file of the building you wish to operate on")
+llm_string = st.text_input("Enter any parameters you would like consistent")
+
+button_clicked = st.button("Optimize")
+
+if button_clicked:
+  if llm_string is not None and uploaded_file is not None:
+    with open('uploaded_file.json', 'r') as f:
+      data = json.load(f)
+    parameters = tea(data)
+    agent_executor = create_json_agent(llm, uploaded_file, verbose=True)
+    output = agent_executor.invoke(f"Optimize the building with the given input parameters {llm_string} remaining consistent, with a priority given on to {parameters}", )
+    st.write("Optimized building details:")
+    st.write(output)
+
+  elif llm_string is None and uploaded_file is not None:
+    with open('uploaded_file.json', 'r') as f:
+      data = json.load(f)
+    parameters = tea(data)
+    agent_executor = create_json_agent(llm, uploaded_file, verbose=True)
+    output = agent_executor.invoke(f"Optimize the building with the given input parameters with a priority given on to {parameters}", )
+    st.write("Optimized building details:")
+    st.write(output)
+class PositionalEncoding(nn.Module):
+    def __init__(self, embedding_dim, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, embedding_dim, 2) * (-math.log(10000.0) / embedding_dim))
+        pe = torch.zeros(max_len, 1, embedding_dim)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Arguments:
+            x: Tensor, shape ``[seq_len, batch_size, embedding_dim]``
+        """
+        x = x + self.pe[:x.size(0)]
+        return self.dropout(x)
+#GPT-4o model only, can adjust to fit other gpt models if necessary
+#tea stands for tokenization embedding attention
+
+def tea(data):
+  vocab_size = 100000
+  embedding_dim = 64
+
+  #encoding given text
+  encoding = tiktoken.encoding_for_model("gpt-4o")
+  tokenized_data = encoding.encode(data)
+
+  #input for embedding functions (vocab size, dimensions) and apparently standard vocab size is 100k? we can see later, we can talk about it apparently there is code for adjusting as we go (vocab_size = max_token_id + 1  # Set vocabulary size to the maximum token ID + 1)
+  tokenized_tensor = torch.tensor(tokenized_data, dtype=torch.long).unsqueeze(0)
+  embeddingfunction = nn.Embedding(vocab_size, embedding_dim)
+  embedding = embeddingfunction(tokenized_tensor)
+
+  #positional encoding - this part lost me entirely
+  positional_encoding = PositionalEncoding(embedding_dim)
+  encoded_tokens = positional_encoding(embedding)
+
+  #attention function
+  #does not need to be 8
+  multihead_attn = nn.MultiheadAttention(embed_dim = embedding_dim, num_heads = 8, batch_first=True)
+  attn_output, attn_output_weights = multihead_attn(encoded_tokens, encoded_tokens, encoded_tokens)
+
+  #converting back to text
+  linear_layer = nn.Linear(embedding_dim, vocab_size)
+  logits = linear_layer(attn_output)
+  predicted_token_ids = torch.argmax(logits, dim=-1)
+  return encoding.decode(predicted_token_ids.squeeze().tolist())
+
