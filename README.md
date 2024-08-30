@@ -1,0 +1,1 @@
+2024 Summer Research Program at the University of Toronto's Hub for Advancing Buildings, Intelligent and Interactive Buildings Lab, under Professor Seungjae Lee of the Civil and Mineral Engineering Department. Investigated the potential of an AI LLM Chatbot in optimizing building energy models to reduce emissions.
